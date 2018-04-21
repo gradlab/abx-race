@@ -1,0 +1,176 @@
+---
+title: "Racial/ethnic disparities in antibiotic use"
+author: "Scott W. Olesen and Yonatan H. Grad"
+output: html_document
+---
+
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(message=FALSE, echo=FALSE, cache=TRUE,
+                      fig.path='fig/', dev=c('png', 'pdf'))
+pdf.options(useDingbats=FALSE)
+```
+
+# Methods
+
+## Variance estimation
+
+For correct estimation of the variances in the complex survey, use the *survey* package:
+
+```{r load_survey_package}
+# for correct variance estimation
+library(survey)
+
+# tidying the survey functions
+tidy.svyby = function(sb) {
+  ci = confint(sb)
+  df = data_frame(estimate=coef(sb), se=SE(sb),
+                  cil=ci[,1], ciu=ci[,2])
+  
+  for (i in 1:(length(names(sb)) - 2)) {
+    cn = names(sb)[i]
+    df[[cn]] = sb[[cn]]
+  }
+  
+  df
+}
+
+tidy.svystat = function(sm) {
+  ci = confint(sm)
+  data_frame(estimate=coef(sm), se=as.numeric(SE(sm)), cil=ci[,1], ciu=ci[,2])
+}
+
+citation('survey')
+```
+
+## Survey data
+
+The MEPS data for 2014/2015 are scraped and cleaned using a script in the `data/` directory. We exclude individuals with zero survey weight and "inapplicable" ages (coded as `-1`).
+
+```{r load_meps_data}
+races = c('white', 'black', 'Hispanic', 'other')
+race_labels = c('white', 'black', 'Hispanic', 'other race')
+
+meps_dat = read_tsv('../data/meps.tsv') %>%
+  # cast race as a factor for nice ordering in tables
+  mutate(race=factor(race, levels=races, labels=race_labels)) %>%
+  # dichotomous white-race variable for Poisson regressions
+  mutate(white=as.integer(race=='white')) %>%
+  # age groups for Poisson regressions
+  mutate_at(vars(age), as.integer) %>%
+  mutate(age_group = case_when(
+    .$age == -1 ~ 'inapplicable',
+    between(.$age, 0, 9) ~ '0-9',
+    between(.$age, 10, 20) ~ '10-20',
+    between(.$age, 21, 64) ~ '21-64',
+    .$age >= 65 ~ '65+'
+  ))
+
+meps = svydesign(ids=~survey_psu,
+                 strata=~survey_stratum,
+                 weights=~survey_person_weight,
+                 data=meps_dat, nest=TRUE) %>%
+  subset(survey_person_weight > 0 & age_group != 'inapplicable')
+```
+
+# Results
+
+```{r compute_race_category}
+# compute counts of antibiotics for each of these categories
+key_levels = c('abx', 'penicillins', 'macrolides', 'other', 'sulfonamides', 'quinolones')
+key_labels = c('all antibiotics', 'penicillins', 'macrolides', 'other antibiotics', 'sulfonamides', 'quinolones')
+key_f = function(x) factor(x, levels=key_levels, labels=key_labels)
+
+# antibiotics per capita across everyone
+overall_mean = svymean(~n_abx, meps)
+
+# antibiotics per capita, for each race/ethnicity and drug group
+race_means = lapply(key_levels, function(abx) {
+  svyby(as.formula(str_c('~n_', abx)), ~race, meps, svymean) %>%
+    tidy() %>%
+    mutate(key=abx)
+}) %>%
+  bind_rows() %>%
+  mutate(key=key_f(key))
+```
+
+## Per capita use of all antibiotics
+
+```{r overall_table}
+# per capita use of all antibiotics, among everyone
+overall_row = overall_mean %>%
+  tidy() %>%
+  mutate(race='everyone')
+
+# per capita use of all antibiotics, by race/ethnicity
+race_rows = race_means %>%
+  filter(key=='all antibiotics')
+  
+bind_rows(overall_row, race_rows) %>%
+  select(`Race/ethnicity`=race, `Annual fills per 1,000 people`=estimate,
+         `Lower 95% CI`=cil, `Upper 95% CI`=ciu) %>%
+  mutate_if(is.numeric, funs(round(. * 1000))) %>%
+  kable(caption='Per capita antibiotic use, MEPS 2014/2015')
+```
+
+## Per capita use of drug groups
+
+```{r use_by_race, fig.width=3.54, fig.height=3.5}
+my_palette = c("#FFFFFF", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+
+race_means %>%
+  mutate_if(is.numeric, funs(.*1000)) %>%
+  mutate(key=fct_reorder(factor(key), -estimate)) %>%
+  ggplot(aes(key, estimate, fill=race)) +
+  geom_col(position='dodge', color='black') +
+  geom_errorbar(aes(ymin=cil, ymax=ciu), position=position_dodge(width=0.9), width=0.5) +
+  scale_fill_manual(values=my_palette) +
+  xlab('') +
+  ylab('annual fills per 1,000 people') +
+  theme(panel.background=element_blank(),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        panel.grid.major.y = element_line(color='gray'),
+        panel.grid.minor.y = element_line(color='gray'),
+        axis.line.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        legend.title = element_blank(),
+        legend.background = element_rect(color='black'),
+        legend.position=c(0.8, 0.8),
+        legend.margin = margin(0, 5, 4, 5),
+        legend.text = element_text(size=8),
+        legend.key.size = unit(4, 'mm'),
+        axis.text.x = element_text(size=8, color='black', angle=30, hjust=1.0, vjust=1.25),
+        axis.text.y = element_text(size=7, color='black'),
+        axis.title.y = element_text(size=9)
+  )
+```
+
+## Race/ethnic disparities in use
+
+For each drug group, we run a Poisson regression predicting per capita antibiotic use from race (white or not), correcting for covariates (age group, sex, US Census region). This regression excludes people without a well-defined Census region.
+
+```{r race_models}
+race_models = lapply(key_levels, function(abx) {
+  svyglm(as.formula(str_interp("n_${abx} ~ white + sex + age_group + region")),
+         subset(meps,  region != 'no_region'), family='quasipoisson') %>%
+    tidy() %>%
+    mutate(key=abx)
+}) %>%
+  bind_rows() %>%
+  mutate(key=key_f(key))
+```
+
+For each model, we report the fold-difference in per-capita use between whites and non-whites. The $p$-values are for a fold difference not equal to 1.
+
+```{r race_models_table}
+race_models %>%
+  filter(term=='white') %>%
+  mutate(ci=1.96*std.error, cil=estimate-ci, ciu=estimate+ci) %>%
+  # svyglm returns the log risk ratio; exponentiate (and round) that
+  # to get the risk ratio (i.e., fold difference)
+  mutate_at(vars(estimate, cil, ciu), funs(round(exp(.), 2))) %>%
+  select(`Drug group`=key, `Fold difference`=estimate,
+         `Lower 95% CI`=cil, `Upper 95% CI`=ciu, p.value) %>%
+  mutate(p.value=prettyNum(p.value, digits=3)) %>% 
+  kable(caption='Fold-differences in per capita use, whites vs. non-whites; MEPS 2014/2015')
+```
