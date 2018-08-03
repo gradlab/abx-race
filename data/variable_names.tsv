@@ -16,13 +16,9 @@ TC2S1_2	tc2_subclass1_subsubclass2
 TC3	tc3
 TC3S1	tc3_subclass1
 TC3S1_1	tc3_subclass1_subsubclass1
-SEX	sex
 RACETHX	race
+RACEWX	white
 VARSTR	survey_stratum
 VARPSU	survey_psu
 PERWT14F	survey_person_weight
 PERWT15F	survey_person_weight
-REGION14	region
-REGION15	region
-AGE14X	age
-AGE15X	age

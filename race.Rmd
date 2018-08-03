@@ -8,6 +8,10 @@ output: html_document
 knitr::opts_chunk$set(message=FALSE, echo=FALSE, cache=TRUE,
                       fig.path='fig/', dev=c('png', 'pdf'))
 pdf.options(useDingbats=FALSE)
+
+library(dplyr)
+library(readr) # for reading the tsv's
+library(magrittr) # for easier data piping
 ```
 
 # Methods
@@ -42,39 +46,36 @@ tidy.svystat = function(sm) {
 citation('survey')
 ```
 
+The [MEPS website](https://meps.ahrq.gov/survey_comp/hc_samplecodes_se.shtml) includes examples of using multiple software programs, including the *survey* package, for variance estimation.
+
 ## Survey data
 
-The MEPS data for 2014/2015 are scraped and cleaned using a script in the `data/` directory. We exclude individuals with zero survey weight and "inapplicable" ages (coded as `-1`).
+The MEPS data for 2014/2015 are scraped and cleaned using a script in the `data/` directory. We exclude individuals with zero survey weight.
 
 ```{r load_meps_data}
-races = c('white', 'black', 'Hispanic', 'other')
-race_labels = c('white', 'black', 'Hispanic', 'other race')
+# encoding and display strings for the two exposure variables
+race_levels = c('white', 'other', 'Hispanic', 'black', 'Asian')
+race_labels = c('Non-Hispanic white only', 'other/multiple race', 'Hispanic', 'Non-Hispanic black only', 'Non-Hispanic Asian only')
+
+white_levels = c('any_white', 'no_white')
+white_labels = c('any white race', 'no white race')
 
 meps_dat = read_tsv('../data/meps.tsv') %>%
   # cast race as a factor for nice ordering in tables
-  mutate(race=factor(race, levels=races, labels=race_labels)) %>%
-  # dichotomous white-race variable for Poisson regressions
-  mutate(white=as.integer(race=='white')) %>%
-  # age groups for Poisson regressions
-  mutate_at(vars(age), as.integer) %>%
-  mutate(age_group = case_when(
-    .$age == -1 ~ 'inapplicable',
-    between(.$age, 0, 9) ~ '0-9',
-    between(.$age, 10, 20) ~ '10-20',
-    between(.$age, 21, 64) ~ '21-64',
-    .$age >= 65 ~ '65+'
-  ))
+  mutate(race = factor(race, levels=race_levels, labels=race_labels),
+         white = factor(white, levels=white_levels, labels=white_labels))
 
+# create the survey object
 meps = svydesign(ids=~survey_psu,
                  strata=~survey_stratum,
                  weights=~survey_person_weight,
                  data=meps_dat, nest=TRUE) %>%
-  subset(survey_person_weight > 0 & age_group != 'inapplicable')
+  subset(survey_person_weight > 0)
 ```
 
 # Results
 
-```{r compute_race_category}
+```{r compute_use}
 # compute counts of antibiotics for each of these categories
 key_levels = c('abx', 'penicillins', 'macrolides', 'other', 'sulfonamides', 'quinolones')
 key_labels = c('all antibiotics', 'penicillins', 'macrolides', 'other antibiotics', 'sulfonamides', 'quinolones')
@@ -84,40 +85,53 @@ key_f = function(x) factor(x, levels=key_levels, labels=key_labels)
 overall_mean = svymean(~n_abx, meps)
 
 # antibiotics per capita, for each race/ethnicity and drug group
-race_means = lapply(key_levels, function(abx) {
-  svyby(as.formula(str_c('~n_', abx)), ~race, meps, svymean) %>%
-    tidy() %>%
-    mutate(key=abx)
-}) %>%
-  bind_rows() %>%
-  mutate(key=key_f(key))
+race_means = data_frame(key=key_levels, frmla=str_c('~n_', key)) %>%
+  group_by(key) %>%
+  do(tidy(svyby(as.formula(.$frmla), ~race, meps, svymean))) %>%
+  ungroup() %>%
+  mutate(key = key_f(key))
+
+# and by white race
+white_means = data_frame(key = key_levels, frmla = str_c('~n_', key)) %>%
+  group_by(key) %>%
+  do(tidy(svyby(as.formula(.$frmla), ~white, meps, svymean))) %>%
+  ungroup() %>%
+  mutate(key = key_f(key))
 ```
 
 ## Per capita use of all antibiotics
 
-```{r overall_table}
+```{r overall_table_race, warning=FALSE}
 # per capita use of all antibiotics, among everyone
-overall_row = overall_mean %>%
-  tidy() %>%
-  mutate(race='everyone')
+overall_row = tidy(overall_mean) %>%
+  mutate(race = 'everyone')
 
 # per capita use of all antibiotics, by race/ethnicity
 race_rows = race_means %>%
-  filter(key=='all antibiotics')
-  
+  filter(key == 'all antibiotics')
+
 bind_rows(overall_row, race_rows) %>%
   select(`Race/ethnicity`=race, `Annual fills per 1,000 people`=estimate,
          `Lower 95% CI`=cil, `Upper 95% CI`=ciu) %>%
   mutate_if(is.numeric, funs(round(. * 1000))) %>%
-  kable(caption='Per capita antibiotic use, MEPS 2014/2015')
+  kable(caption='Reported antibiotic use by race/ethnicity category, MEPS 2014/2015')
 ```
 
-## Per capita use of drug groups
+```{r overall_table_white}
+white_means %>%
+  filter(key == 'all antibiotics') %>%
+  select(`Race`=white, `Annual fills per 1,000 people`=estimate,
+         `Lower 95% CI`=cil, `Upper 95% CI`=ciu) %>%
+  mutate_if(is.numeric, funs(round(. * 1000))) %>%
+  kable(caption='Reported antibiotic use by white race, MEPS 2014/2015')
+```
+
+## Per capita use by drug
 
 ```{r use_by_race, fig.width=3.54, fig.height=3.5}
 my_palette = c("#FFFFFF", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
 
-race_means %>%
+race_plot = race_means %>%
   mutate_if(is.numeric, funs(.*1000)) %>%
   mutate(key=fct_reorder(factor(key), -estimate)) %>%
   ggplot(aes(key, estimate, fill=race)) +
@@ -125,7 +139,8 @@ race_means %>%
   geom_errorbar(aes(ymin=cil, ymax=ciu), position=position_dodge(width=0.9), width=0.5) +
   scale_fill_manual(values=my_palette) +
   xlab('') +
-  ylab('annual fills per 1,000 people') +
+  ylab('reported annual fills per 1,000 people') +
+  ylim(0, 500) +
   theme(panel.background=element_blank(),
         panel.grid.major.x = element_blank(),
         panel.grid.minor.x = element_blank(),
@@ -143,34 +158,90 @@ race_means %>%
         axis.text.y = element_text(size=7, color='black'),
         axis.title.y = element_text(size=9)
   )
+
+race_plot
+```
+
+```{r use_by_white, fig.width=3.54, fig.height=3.5}
+white_plot = white_means %>%
+  mutate_if(is.numeric, funs(.*1000)) %>%
+  mutate(key=fct_reorder(factor(key), -estimate)) %>%
+  ggplot(aes(key, estimate, fill=white)) +
+  geom_col(position='dodge', color='black') +
+  geom_errorbar(aes(ymin=cil, ymax=ciu), position=position_dodge(width=0.9), width=0.5) +
+  scale_fill_manual(values=c('white', 'black')) +
+  xlab('') +
+  ylab('') +
+  ylim(0, 500) +
+  theme(panel.background=element_blank(),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        panel.grid.major.y = element_line(color='gray'),
+        panel.grid.minor.y = element_line(color='gray'),
+        axis.line.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        legend.title = element_blank(),
+        legend.background = element_rect(color='black'),
+        legend.position=c(0.7, 0.865),
+        legend.margin = margin(0, 5, 4, 5),
+        legend.text = element_text(size=8),
+        legend.key.size = unit(4, 'mm'),
+        axis.text.x = element_text(size=8, color='black', angle=30, hjust=1.0, vjust=1.25),
+        axis.text.y = element_text(size=7, color='black'),
+        axis.title.y = element_text(size=9)
+  )
+
+white_plot +
+  ylab('reported annual fills per 1,000 people')
+```
+
+```{r combined_plot, fig.width=7.5, fig.height=3.5, eval=FALSE}
+ggpubr::ggarrange(race_plot, white_plot, labels=c('a', 'b'), widths=c(1, 3/5))
 ```
 
 ## Race/ethnic disparities in use
 
-For each drug group, we run a Poisson regression predicting per capita antibiotic use from race (white or not), correcting for covariates (age group, sex, US Census region). This regression excludes people without a well-defined Census region.
+```{r compute_ratios}
+ratio = function(num_mean, num_sd, den_mean, den_sd, n_trials=1e6, alpha=0.05) {
+  # draw random deviates to simulate the random ratios
+  numerator_deviates = rnorm(n_trials, num_mean, num_sd)
+  denominator_deviates = rnorm(n_trials, den_mean, den_sd)
+  ratios = numerator_deviates / denominator_deviates
+  
+  # compute the confidence interval from those random ratios
+  cis = quantile(ratios, c(alpha / 2, 1 - alpha / 2))
+  
+  data_frame(estimate = num_mean / den_mean,
+             se = sd(ratios),
+             conf.low = cis[1],
+             conf.high = cis[2])
+}
 
-```{r race_models}
-race_models = lapply(key_levels, function(abx) {
-  svyglm(as.formula(str_interp("n_${abx} ~ white + sex + age_group + region")),
-         subset(meps,  region != 'no_region'), family='quasipoisson') %>%
-    tidy() %>%
-    mutate(key=abx)
-}) %>%
-  bind_rows() %>%
-  mutate(key=key_f(key))
+race_ratios = race_means %>%
+  filter(race != 'Non-Hispanic white only') %>%
+  left_join(filter(race_means, race=='Non-Hispanic white only'), by='key', suffix=c('', '.ref')) %>%
+  group_by(key, race) %>%
+  do(ratio(.$estimate.ref, .$se.ref, .$estimate, .$se)) %>%
+  ungroup()
+
+white_ratios = white_means %>%
+  filter(white != 'any white race') %>%
+  left_join(filter(white_means, white=='any white race'), by='key', suffix=c('', '.ref')) %>%
+  group_by(key, white) %>%
+  do(ratio(.$estimate.ref, .$se.ref, .$estimate, .$se)) %>%
+  ungroup()
 ```
 
-For each model, we report the fold-difference in per-capita use between whites and non-whites. The $p$-values are for a fold difference not equal to 1.
+```{r ratio_tables}
+race_ratios %>%
+  select(`Antibiotic`=key, `Race`=race, `ratio (NHWO vs. this race)`=estimate,
+         `lower 95% CI`=conf.low, `upper 95% CI`=conf.high) %>%
+  mutate_if(is.numeric, function(x) round(x, 3)) %>%
+  kable(caption='Ratios of reported fill rates by categorical race/ethnicity, MEPS 2014/2015')
 
-```{r race_models_table}
-race_models %>%
-  filter(term=='white') %>%
-  mutate(ci=1.96*std.error, cil=estimate-ci, ciu=estimate+ci) %>%
-  # svyglm returns the log risk ratio; exponentiate (and round) that
-  # to get the risk ratio (i.e., fold difference)
-  mutate_at(vars(estimate, cil, ciu), funs(round(exp(.), 2))) %>%
-  select(`Drug group`=key, `Fold difference`=estimate,
-         `Lower 95% CI`=cil, `Upper 95% CI`=ciu, p.value) %>%
-  mutate(p.value=prettyNum(p.value, digits=3)) %>% 
-  kable(caption='Fold-differences in per capita use, whites vs. non-whites; MEPS 2014/2015')
+white_ratios %>%
+  select(`Antibiotic`=key, `ratio (any white race vs. no white race)`=estimate,
+         `lower 95% CI`=conf.low, `upper 95% CI`=conf.high) %>%
+  mutate_if(is.numeric, function(x) round(x, 3)) %>%
+  kable(caption='Ratios of reported fill rates by white race, MEPS 2014/2015')
 ```

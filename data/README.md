@@ -1,8 +1,8 @@
-# Getting and cleaning the MEPS data
+% Getting and cleaning the MEPS data
 
 The script `get_meps.R` downloads and cleans the data.
 
-## Downloading data files
+# Downloading data files
 
 First, given a PUF ID, the script downloads the zipped SAS version of the
 corresponding file. For example, the 2015 Full Year Consolidated Data File has
@@ -13,7 +13,7 @@ PUF ID HC-181, which gets translated into "H181":
 Second, it keeps only a subset of the columns in the original data and renames
 them according to `variable_names.tsv`.
 
-## Cleaning the data
+# Cleaning the data
 
 Each year has two relevant data files, the Full Year Consolidated Data File,
 which has demographic information about the individuals in the survey, and the
@@ -30,7 +30,7 @@ according to a few classes. The total antibiotic fills and fills for specific
 classes are aggregated by individual.
 
 Finally, the individual-level antibiotic use data is merged with the
-information in the Consolidated Data File, and encoded values (e.g., 1=male,
-2=female) are decoded.
+information in the Consolidated Data File, and encoded values (e.g., 1=Hispanic,
+2=non-Hispanic white only, etc.) are decoded.
 
 The results are placed in `meps.tsv`.
