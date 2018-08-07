@@ -129,11 +129,10 @@ white_means %>%
 ## Per capita use by drug
 
 ```{r use_by_race, fig.width=3.54, fig.height=3.5}
-my_palette = c("#FFFFFF", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+my_palette = c("#FFFFFF", "#009E73", "#F0E442", "#E69F00", "#56B4E9", "#0072B2", "#D55E00", "#CC79A7")
 
 race_plot = race_means %>%
   mutate_if(is.numeric, funs(.*1000)) %>%
-  mutate(key=fct_reorder(factor(key), -estimate)) %>%
   ggplot(aes(key, estimate, fill=race)) +
   geom_col(position='dodge', color='black') +
   geom_errorbar(aes(ymin=cil, ymax=ciu), position=position_dodge(width=0.9), width=0.5) +
@@ -150,7 +149,7 @@ race_plot = race_means %>%
         axis.ticks.x = element_blank(),
         legend.title = element_blank(),
         legend.background = element_rect(color='black'),
-        legend.position=c(0.8, 0.8),
+        legend.position=c(0.7, 0.725),
         legend.margin = margin(0, 5, 4, 5),
         legend.text = element_text(size=8),
         legend.key.size = unit(4, 'mm'),
@@ -165,7 +164,6 @@ race_plot
 ```{r use_by_white, fig.width=3.54, fig.height=3.5}
 white_plot = white_means %>%
   mutate_if(is.numeric, funs(.*1000)) %>%
-  mutate(key=fct_reorder(factor(key), -estimate)) %>%
   ggplot(aes(key, estimate, fill=white)) +
   geom_col(position='dodge', color='black') +
   geom_errorbar(aes(ymin=cil, ymax=ciu), position=position_dodge(width=0.9), width=0.5) +
@@ -193,10 +191,6 @@ white_plot = white_means %>%
 
 white_plot +
   ylab('reported annual fills per 1,000 people')
-```
-
-```{r combined_plot, fig.width=7.5, fig.height=3.5, eval=FALSE}
-ggpubr::ggarrange(race_plot, white_plot, labels=c('a', 'b'), widths=c(1, 3/5))
 ```
 
 ## Race/ethnic disparities in use
