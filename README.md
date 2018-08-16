@@ -7,6 +7,8 @@ The `data/` folders includes `meps.tsv`, the data that `race.Rmd` uses to
 compute the results and well as other files that can be used to download the
 raw data from the MEPS website and format it for easy use.
 
+**These results have not been peer reviewed.**
+
 Scott W. Olesen and Yonatan H. Grad
 
 <olesen@hsph.harvard.edu>

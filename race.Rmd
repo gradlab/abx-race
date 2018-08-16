@@ -5,7 +5,7 @@ output: html_document
 ---
 
 ```{r global_options, include=FALSE}
-knitr::opts_chunk$set(message=FALSE, echo=FALSE, cache=TRUE,
+knitr::opts_chunk$set(message=FALSE, echo=FALSE, cache=TRUE, autodep=TRUE,
                       fig.path='fig/', dev=c('png', 'pdf'))
 pdf.options(useDingbats=FALSE)
 
@@ -205,7 +205,7 @@ ratio = function(num_mean, num_sd, den_mean, den_sd, n_trials=1e6, alpha=0.05) {
   # compute the confidence interval from those random ratios
   cis = quantile(ratios, c(alpha / 2, 1 - alpha / 2))
   
-  data_frame(estimate = num_mean / den_mean,
+  data_frame(estimate = mean(ratios),
              se = sd(ratios),
              conf.low = cis[1],
              conf.high = cis[2])
